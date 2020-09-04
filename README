@@ -1,0 +1,16 @@
+Fffx: adjust ffmpeg effects while playing.
+
+Schism Tracker can diskwrite each channel of a song to a wav file. For a mix, I
+want to tweak bandpass, gain and reverb of each individual sample while hearing
+them all together. Then I'll copy each sample, apply its resulting effect
+settings, and use that in place of the dry original.
+
+Depending on SDL2 and ffmpeg, I'll be writing such a utility here. For
+development convenience, I'll use a Makefile, clang-format and git.
+
+  git clone https://github.com/nykula/fffx
+  cd fffx
+  make
+  ./fffx ~/*.wav
+
+0BSD license is equivalent to public domain.
