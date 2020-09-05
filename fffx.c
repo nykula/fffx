@@ -15,8 +15,9 @@ int main(int argc, char **argv) {
             flt, avfilter_get_by_name("abuffersink"), 0)))
     return printf("bad mem\n"), 1;
 
-  av_opt_set(*buf, "filename", argv[argc - 1], 1);
-  if (avfilter_init_str(*buf, 0) < 0 || avfilter_init_str(*fx, 0) < 0 ||
+  if (av_opt_set(*buf, "filename", argv[argc - 1], 1) < 0 ||
+      av_opt_set_int(*buf, "loop", 0, 1) < 0 ||
+      avfilter_init_str(*buf, 0) < 0 || avfilter_init_str(*fx, 0) < 0 ||
       avfilter_init_str(*sink, 0) < 0 || avfilter_link(*buf, 0, *fx, 0) < 0 ||
       avfilter_link(*fx, 0, *sink, 0) < 0 || avfilter_graph_config(flt, 0) < 0)
     return printf("bad graph\n"), 1;
