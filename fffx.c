@@ -8,15 +8,15 @@ int main(int argc, char **argv) {
   if (!(flt = avfilter_graph_alloc()) || !(*bufs = avfilter_inout_alloc()) ||
       !(*sinks = avfilter_inout_alloc()))
     return printf("bad mem\n"), 1;
+  (*bufs)->filter_ctx =
+      avfilter_graph_alloc_filter(flt, avfilter_get_by_name("amovie"), 0);
+  av_opt_set((*bufs)->filter_ctx, "filename", argv[argc - 1], 1);
+  avfilter_init_str((*bufs)->filter_ctx, 0), (*bufs)->name = av_strdup("in");
   avfilter_graph_create_filter(
-      &(*bufs)->filter_ctx, avfilter_get_by_name("anullsrc"), "buf", 0, 0, flt);
-  (*bufs)->name = av_strdup("in");
-  avfilter_graph_create_filter(&(*sinks)->filter_ctx,
-                               avfilter_get_by_name("abuffersink"), "sink", 0,
-                               0, flt);
+      &(*sinks)->filter_ctx, avfilter_get_by_name("abuffersink"), 0, 0, 0, flt);
   (*sinks)->name = av_strdup("out");
   if (avfilter_graph_parse_ptr(flt, "anull", sinks, bufs, 0) < 0 ||
       avfilter_graph_config(flt, 0) < 0)
     return printf("bad graph\n"), 1;
-  printf("%s\n", argv[--argc]);
+  printf("%s\n", argv[argc - 1]);
 }
