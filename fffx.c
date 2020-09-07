@@ -23,25 +23,22 @@ int main(int argc, char **argv) {
       !(wait$ = SDL_CreateMutex()) || SDL_LockMutex(wait$))
     return printf("bad mem\n"), 1;
 
-  if (av_opt_set(*dry, "filename", argv[argc - 1], 1) < 0 ||
-      av_opt_set_int(*dry, "loop", 0, 1) < 0 ||
-      av_opt_set(*room, "filename", argv[argc - 2], 1) < 0 ||
-      av_opt_set_int_list(*sink, "sample_fmts", ((int[]){1, -1}), -1, 1) < 0 ||
-      av_opt_set(*verb, "weights", "20 10", 1) < 0 ||
-      avfilter_init_str(*band, 0) < 0 || avfilter_init_str(*dry, 0) < 0 ||
-      avfilter_init_str(*nul, 0) < 0 || avfilter_init_str(*nulsink, 0) < 0 ||
-      avfilter_init_str(*room, 0) < 0 || avfilter_init_str(*sink, 0) < 0 ||
-      avfilter_init_str(*verb, 0) < 0 || avfilter_init_str(*verbsplit, 0) < 0 ||
-      avfilter_init_str(*verbwet, 0) < 0 ||
-      avfilter_link(*nul, 0, *nulsink, 0) < 0 ||
-      avfilter_link(*dry, 0, *band, 0) < 0 ||
-      avfilter_link(*band, 0, *verbsplit, 0) < 0 ||
-      avfilter_link(*verbsplit, 0, *verbwet, 0) < 0 ||
-      avfilter_link(*room, 0, *verbwet, 1) < 0 ||
-      avfilter_link(*verbsplit, 1, *verb, 0) < 0 ||
-      avfilter_link(*verbwet, 0, *verb, 1) < 0 ||
-      avfilter_link(*verb, 0, *sink, 0) < 0 ||
-      avfilter_graph_config(TT.g, 0) < 0)
+  if (av_opt_set(*dry, "filename", argv[argc - 1], 1) ||
+      av_opt_set_int(*dry, "loop", 0, 1) ||
+      av_opt_set(*room, "filename", argv[argc - 2], 1) ||
+      av_opt_set_int_list(*sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
+      av_opt_set(*verb, "weights", "20 10", 1) || avfilter_init_str(*band, 0) ||
+      avfilter_init_str(*dry, 0) || avfilter_init_str(*nul, 0) ||
+      avfilter_init_str(*nulsink, 0) || avfilter_init_str(*room, 0) ||
+      avfilter_init_str(*sink, 0) || avfilter_init_str(*verb, 0) ||
+      avfilter_init_str(*verbsplit, 0) || avfilter_init_str(*verbwet, 0) ||
+      avfilter_link(*nul, 0, *nulsink, 0) || avfilter_link(*dry, 0, *band, 0) ||
+      avfilter_link(*band, 0, *verbsplit, 0) ||
+      avfilter_link(*verbsplit, 0, *verbwet, 0) ||
+      avfilter_link(*room, 0, *verbwet, 1) ||
+      avfilter_link(*verbsplit, 1, *verb, 0) ||
+      avfilter_link(*verbwet, 0, *verb, 1) ||
+      avfilter_link(*verb, 0, *sink, 0) || avfilter_graph_config(TT.g, 0))
     return printf("bad graph\n"), 1;
 
   want.channels = av_buffersink_get_channels(*sink);
@@ -51,7 +48,7 @@ int main(int argc, char **argv) {
 
   while (SDL_CondWaitTimeout(wait, wait$, 1)) {
     if ((int)SDL_GetQueuedAudioSize(1) > *f->linesize ||
-        av_buffersink_get_frame(*sink, f) < 0)
+        av_buffersink_get_frame(*sink, f))
       continue;
     printf("%s %f\n", argv[argc - 1],
            f->pts * av_q2d(av_buffersink_get_time_base(*sink)));
