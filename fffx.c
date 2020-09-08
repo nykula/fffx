@@ -46,12 +46,12 @@ int main(int argc, char **argv) {
   if (SDL_OpenAudio(&want, 0))
     return printf("%s\n", SDL_GetError()), 1;
 
-  while (SDL_CondWaitTimeout(wait, wait$, 1)) {
-    if ((int)SDL_GetQueuedAudioSize(1) > *f->linesize ||
+  for (SDL_PauseAudio(0); SDL_CondWaitTimeout(wait, wait$, 1);) {
+    if ((int)SDL_GetQueuedAudioSize(1) > f->channels * f->nb_samples * 2 ||
         av_buffersink_get_frame(*sink, f))
       continue;
     printf("%s %f\n", argv[argc - 1],
            f->pts * av_q2d(av_buffersink_get_time_base(*sink)));
-    SDL_PauseAudio(0), SDL_QueueAudio(1, *f->data, *f->linesize);
+    SDL_QueueAudio(1, *f->data, f->channels * f->nb_samples * 2);
   }
 }
