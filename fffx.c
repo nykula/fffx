@@ -68,9 +68,10 @@ int main(int argc, char **argv) {
       SDL_Delay(1);
       continue;
     }
+    av_frame_unref(af), av_frame_unref(vf);
     // Why two pictures for each sound?
     if (av_buffersink_get_frame(*sink, af) ||
-        av_buffersink_get_frame(*vsink, vf) ||
+        av_buffersink_get_frame(*vsink, vf) || (av_frame_unref(vf), 0) ||
         av_buffersink_get_frame(*vsink, vf))
       return printf("bad frame\n"), 1;
     printf("%s %f\n", argv[argc - 1],
