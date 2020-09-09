@@ -7,24 +7,25 @@ int fltnew(AVFilterContext **f, const char *n) {
   return !(*f = avfilter_graph_alloc_filter(TT.g, avfilter_get_by_name(n), 0));
 }
 int main(int argc, char **argv) {
+  AVFrame *af, *vf;
   AVFilterContext *band[1] = {0}, *dry[1] = {0}, *nul[1] = {0},
                   *nulsink[1] = {0}, *room[1] = {0}, *show[1] = {0},
                   *showsplit[1] = {0}, *sink[1] = {0}, *verb[1] = {0},
                   *verbsplit[1] = {0}, *verbwet[1] = {0}, *vsink[1] = {0};
   SDL_Event ev;
-  AVFrame *f;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   SDL_Texture *tx;
   SDL_AudioSpec want = {0};
   SDL_Window *win;
-  if (!(f = av_frame_alloc()) || !(TT.g = avfilter_graph_alloc()) ||
-      fltnew(band, "bandpass") || fltnew(dry, "amovie") ||
-      fltnew(nul, "anullsrc") || fltnew(nulsink, "anullsink") ||
-      fltnew(room, "amovie") || fltnew(show, "showfreqs") ||
-      fltnew(showsplit, "asplit") || fltnew(sink, "abuffersink") ||
-      fltnew(verb, "amix") || fltnew(verbsplit, "asplit") ||
-      fltnew(verbwet, "afir") || fltnew(vsink, "buffersink"))
+  if (!(af = av_frame_alloc()) || !(vf = av_frame_alloc()) ||
+      !(TT.g = avfilter_graph_alloc()) || fltnew(band, "bandpass") ||
+      fltnew(dry, "amovie") || fltnew(nul, "anullsrc") ||
+      fltnew(nulsink, "anullsink") || fltnew(room, "amovie") ||
+      fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
+      fltnew(sink, "abuffersink") || fltnew(verb, "amix") ||
+      fltnew(verbsplit, "asplit") || fltnew(verbwet, "afir") ||
+      fltnew(vsink, "buffersink"))
     return printf("bad mem\n"), 1;
 
   if (av_opt_set(*dry, "filename", argv[argc - 1], 1) ||
@@ -54,6 +55,8 @@ int main(int argc, char **argv) {
 
   want.channels = av_buffersink_get_channels(*sink);
   want.freq = av_buffersink_get_sample_rate(*sink);
+  if (av_buffersink_get_frame(*vsink, vf))
+    return printf("bad frame\n"), 1;
   if (SDL_OpenAudio(&want, 0) ||
       SDL_CreateWindowAndRenderer(256, 256, 0, &win, &sdl) ||
       !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
@@ -61,24 +64,21 @@ int main(int argc, char **argv) {
     return printf("%s\n", SDL_GetError()), 1;
 
   for (SDL_PauseAudio(0);;) {
-    if ((int)SDL_GetQueuedAudioSize(1) > f->channels * f->nb_samples * 2) {
+    if ((int)SDL_GetQueuedAudioSize(1) > af->channels * af->nb_samples * 2) {
       SDL_Delay(1);
       continue;
     }
-    if (av_buffersink_get_frame(*sink, f))
+    // Why two pictures for each sound?
+    if (av_buffersink_get_frame(*sink, af) ||
+        av_buffersink_get_frame(*vsink, vf) ||
+        av_buffersink_get_frame(*vsink, vf))
       return printf("bad frame\n"), 1;
     printf("%s %f\n", argv[argc - 1],
-           f->pts * av_q2d(av_buffersink_get_time_base(*sink)));
-    SDL_QueueAudio(1, *f->data, f->channels * f->nb_samples * 2);
-
+           af->pts * av_q2d(av_buffersink_get_time_base(*sink)));
+    SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
     r.h = r.w = 256, r.y = 0;
     SDL_SetRenderDrawColor(sdl, 0, 0, 0, 255), SDL_RenderFillRect(sdl, &r);
-
-    if (av_buffersink_get_frame(*vsink, f))
-      return printf("bad frame\n"), 1;
-    printf("%s %f\n", argv[argc - 1],
-           f->pts * av_q2d(av_buffersink_get_time_base(*vsink)));
-    SDL_UpdateTexture(tx, 0, *f->data, *f->linesize);
+    SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
     r.h = 128, r.w = 256, r.y = 92, SDL_RenderCopy(sdl, tx, 0, &r);
 
     switch (SDL_RenderPresent(sdl), SDL_PollEvent(&ev), ev.type) {
