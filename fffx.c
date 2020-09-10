@@ -8,59 +8,81 @@ int fltnew(AVFilterContext **f, const char *n) {
 }
 int main(int argc, char **argv) {
   AVFrame *af, *vf;
-  AVFilterContext *band[1] = {0}, *dry[1] = {0}, *nul[1] = {0},
-                  *nulsink[1] = {0}, *room[1] = {0}, *show[1] = {0},
-                  *showsplit[1] = {0}, *sink[1] = {0}, *verb[1] = {0},
-                  *verbsplit[1] = {0}, *verbwet[1] = {0}, *vsink[1] = {0};
+  AVFilterContext *band[9] = {0}, *dry[9] = {0}, *master = 0, *nul[9] = {0},
+                  *nulsink[9] = {0}, *room[9] = {0}, *show[9] = {0},
+                  *showsplit[9] = {0}, *sink = 0, *verb[9] = {0},
+                  *verbsplit[9] = {0}, *verbwet[9] = {0}, *vol = 0,
+                  *vsink[9] = {0};
   SDL_Event ev;
+  int i;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   SDL_Texture *tx;
   SDL_AudioSpec want = {0};
   SDL_Window *win;
-  if (!(af = av_frame_alloc()) || !(vf = av_frame_alloc()) ||
-      !(TT.g = avfilter_graph_alloc()) || fltnew(band, "bandpass") ||
-      fltnew(dry, "amovie") || fltnew(nul, "anullsrc") ||
-      fltnew(nulsink, "anullsink") || fltnew(room, "amovie") ||
-      fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
-      fltnew(sink, "abuffersink") || fltnew(verb, "amix") ||
-      fltnew(verbsplit, "asplit") || fltnew(verbwet, "afir") ||
-      fltnew(vsink, "buffersink"))
-    return printf("bad mem\n"), 1;
 
-  if (av_opt_set(*dry, "filename", argv[argc - 1], 1) ||
-      av_opt_set_int(*dry, "loop", 0, 1) ||
-      av_opt_set(*room, "filename", argv[argc - 2], 1) ||
-      av_opt_set(*show, "s", "256x128", 1) ||
-      av_opt_set(*show, "colors", "cyan", 1) ||
-      av_opt_set_int_list(*sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
-      av_opt_set(*verb, "weights", "20 10", 1) || avfilter_init_str(*band, 0) ||
-      avfilter_init_str(*dry, 0) || avfilter_init_str(*nul, 0) ||
-      avfilter_init_str(*nulsink, 0) || avfilter_init_str(*room, 0) ||
+  if (argc - 1 < 9)
+    return printf("usage: fffx reverb.wav 1.wav 2.wav ... 8.wav\n"), 1;
+  if (!(TT.g = avfilter_graph_alloc()) || !(af = av_frame_alloc()) ||
+      !(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
+      fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
+      fltnew(&sink, "abuffersink") || fltnew(&vol, "volume") ||
+      fltnew(vsink, "buffersink") ||
+      av_opt_set_int(master, "inputs", 9 - 1, 1) ||
+      av_opt_set(*show, "s", "256x32", 1) ||
+      av_opt_set(*show, "fscale", "log", 1) ||
+      av_opt_set_int_list(sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
+      av_opt_set(vol, "volume", "8.0", 1) || avfilter_init_str(master, 0) ||
       avfilter_init_str(*show, 0) || avfilter_init_str(*showsplit, 0) ||
-      avfilter_init_str(*sink, 0) || avfilter_init_str(*verb, 0) ||
-      avfilter_init_str(*verbsplit, 0) || avfilter_init_str(*verbwet, 0) ||
-      avfilter_init_str(*vsink, 0) || avfilter_link(*nul, 0, *nulsink, 0) ||
-      avfilter_link(*dry, 0, *band, 0) ||
-      avfilter_link(*band, 0, *verbsplit, 0) ||
-      avfilter_link(*verbsplit, 0, *verbwet, 0) ||
-      avfilter_link(*room, 0, *verbwet, 1) ||
-      avfilter_link(*verbsplit, 1, *verb, 0) ||
-      avfilter_link(*verbwet, 0, *verb, 1) ||
-      avfilter_link(*verb, 0, *showsplit, 0) ||
+      avfilter_init_str(sink, 0) || avfilter_init_str(vol, 0) ||
+      avfilter_link(master, 0, vol, 0) ||
+      avfilter_link(vol, 0, *showsplit, 0) ||
       avfilter_link(*showsplit, 0, *show, 0) ||
-      avfilter_link(*showsplit, 1, *sink, 0) ||
-      avfilter_link(*show, 0, *vsink, 0) || avfilter_graph_config(TT.g, 0))
+      avfilter_link(*showsplit, 1, sink, 0) ||
+      avfilter_link(*show, 0, *vsink, 0))
+    return printf("bad master\n"), 1;
+  for (i = 1; i < 9; i++)
+    if (fltnew(&band[i], "bandpass") || fltnew(&dry[i], "amovie") ||
+        fltnew(&nul[i], "anullsrc") || fltnew(&nulsink[i], "anullsink") ||
+        fltnew(&room[i], "amovie") || fltnew(&show[i], "showfreqs") ||
+        fltnew(&showsplit[i], "asplit") || fltnew(&verb[i], "amix") ||
+        fltnew(&verbsplit[i], "asplit") || fltnew(&verbwet[i], "afir") ||
+        fltnew(&vsink[i], "buffersink") ||
+        av_opt_set(dry[i], "filename", argv[1 + i], 1) ||
+        av_opt_set_int(dry[i], "loop", 0, 1) ||
+        av_opt_set(room[i], "filename", argv[1], 1) ||
+        av_opt_set(show[i], "s", "256x32", 1) ||
+        av_opt_set(show[i], "fscale", "log", 1) ||
+        av_opt_set(verb[i], "weights", "20 10", 1) ||
+        avfilter_init_str(band[i], 0) || avfilter_init_str(dry[i], 0) ||
+        avfilter_init_str(nul[i], 0) || avfilter_init_str(nulsink[i], 0) ||
+        avfilter_init_str(room[i], 0) || avfilter_init_str(show[i], 0) ||
+        avfilter_init_str(showsplit[i], 0) || avfilter_init_str(verb[i], 0) ||
+        avfilter_init_str(verbsplit[i], 0) ||
+        avfilter_init_str(verbwet[i], 0) || avfilter_init_str(vsink[i], 0) ||
+        avfilter_link(nul[i], 0, nulsink[i], 0) ||
+        avfilter_link(dry[i], 0, band[i], 0) ||
+        avfilter_link(band[i], 0, verbsplit[i], 0) ||
+        avfilter_link(verbsplit[i], 0, verbwet[i], 0) ||
+        avfilter_link(room[i], 0, verbwet[i], 1) ||
+        avfilter_link(verbsplit[i], 1, verb[i], 0) ||
+        avfilter_link(verbwet[i], 0, verb[i], 1) ||
+        avfilter_link(verb[i], 0, showsplit[i], 0) ||
+        avfilter_link(showsplit[i], 0, show[i], 0) ||
+        avfilter_link(showsplit[i], 1, master, i - 1) ||
+        avfilter_link(show[i], 0, vsink[i], 0))
+      return printf("bad ch%d %s\n", i, argv[1 + i]), 1;
+  if (avfilter_graph_config(TT.g, 0))
     return printf("bad graph\n"), 1;
 
-  want.channels = av_buffersink_get_channels(*sink);
-  want.freq = av_buffersink_get_sample_rate(*sink);
+  want.channels = av_buffersink_get_channels(sink);
+  want.freq = av_buffersink_get_sample_rate(sink);
   if (av_buffersink_get_frame(*vsink, vf))
     return printf("bad frame\n"), 1;
   if (SDL_OpenAudio(&want, 0) ||
-      SDL_CreateWindowAndRenderer(256, 256, 0, &win, &sdl) ||
+      SDL_CreateWindowAndRenderer(256, 288, 0, &win, &sdl) ||
       !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
-                               SDL_TEXTUREACCESS_STREAMING, 256, 128)))
+                               SDL_TEXTUREACCESS_STREAMING, 256, 32)))
     return printf("%s\n", SDL_GetError()), 1;
 
   for (SDL_PauseAudio(0);;) {
@@ -68,19 +90,18 @@ int main(int argc, char **argv) {
       SDL_Delay(1);
       continue;
     }
-    av_frame_unref(af), av_frame_unref(vf);
-    // Why two pictures for each sound?
-    if (av_buffersink_get_frame(*sink, af) ||
-        av_buffersink_get_frame(*vsink, vf) || (av_frame_unref(vf), 0) ||
-        av_buffersink_get_frame(*vsink, vf))
+    if (av_frame_unref(af), av_buffersink_get_frame(sink, af))
       return printf("bad frame\n"), 1;
-    printf("%s %f\n", argv[argc - 1],
-           af->pts * av_q2d(av_buffersink_get_time_base(*sink)));
+    printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
     SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
     r.h = r.w = 256, r.y = 0;
     SDL_SetRenderDrawColor(sdl, 0, 0, 0, 255), SDL_RenderFillRect(sdl, &r);
-    SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
-    r.h = 128, r.w = 256, r.y = 92, SDL_RenderCopy(sdl, tx, 0, &r);
+    for (i = 0; i < 9; i++) {
+      if (av_frame_unref(vf), av_buffersink_get_frame(vsink[i], vf))
+        return printf("bad ch%d frame\n", i), 1;
+      SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
+      r.h = 32, r.w = 256, r.y = 32 * i, SDL_RenderCopy(sdl, tx, 0, &r);
+    }
 
     switch (SDL_RenderPresent(sdl), SDL_PollEvent(&ev), ev.type) {
     case SDL_KEYDOWN:
