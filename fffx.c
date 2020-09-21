@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
   SDL_AudioSpec want = {0};
   SDL_Window *win;
 
-  if (argc - 1 < 9)
+  if (argc < 3)
     return printf("usage: fffx reverb.wav 1.wav 2.wav ... 8.wav\n"), 1;
   if (!(TT.g = avfilter_graph_alloc()) || !(af = av_frame_alloc()) ||
       !(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
         av_opt_set_int(band[i], "f", 48 * (int)pow(2, i), 1) ||
         av_opt_set(band[i], "width_type", "h", 1) ||
         av_opt_set_int(band[i], "w", 36 * (int)pow(2, i - 1), 1) ||
-        av_opt_set(dry[i], "filename", argv[1 + i], 1) ||
+        av_opt_set(dry[i], "filename", argv[2 + (i - 1) % (argc - 2)], 1) ||
         av_opt_set_int(dry[i], "loop", 0, 1) ||
         av_opt_set(room[i], "filename", argv[1], 1) ||
         av_opt_set(show[i], "s", "256x32", 1) ||
