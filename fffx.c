@@ -2,7 +2,10 @@
 #include "libavfilter/buffersink.h"
 #include "libavutil/opt.h"
 #include <SDL.h>
-static struct TT { AVFilterGraph *g; } TT;
+static struct TT {
+  char buf[16];
+  AVFilterGraph *g;
+} TT;
 int fltnew(AVFilterContext **f, const char *n) {
   return !(*f = avfilter_graph_alloc_filter(TT.g, avfilter_get_by_name(n), 0));
 }
@@ -13,6 +16,7 @@ int main(int argc, char **argv) {
                   *showsplit[9] = {0}, *sink = 0, *verb[9] = {0},
                   *verbsplit[9] = {0}, *verbwet[9] = {0}, *vol = 0,
                   *vsink[9] = {0};
+  long buf[2] = {0};
   SDL_Event ev;
   int i;
   SDL_Rect r = {0};
@@ -48,6 +52,10 @@ int main(int argc, char **argv) {
         fltnew(&showsplit[i], "asplit") || fltnew(&verb[i], "amix") ||
         fltnew(&verbsplit[i], "asplit") || fltnew(&verbwet[i], "afir") ||
         fltnew(&vsink[i], "buffersink") ||
+        !(snprintf(TT.buf, 16, "band+%d", i), band[i]->name = strdup(TT.buf)) ||
+        av_opt_set_int(band[i], "f", 48 * (int)pow(2, i), 1) ||
+        av_opt_set(band[i], "width_type", "h", 1) ||
+        av_opt_set_int(band[i], "w", 36 * (int)pow(2, i - 1), 1) ||
         av_opt_set(dry[i], "filename", argv[1 + i], 1) ||
         av_opt_set_int(dry[i], "loop", 0, 1) ||
         av_opt_set(room[i], "filename", argv[1], 1) ||
@@ -82,7 +90,8 @@ int main(int argc, char **argv) {
   if (SDL_OpenAudio(&want, 0) ||
       SDL_CreateWindowAndRenderer(256, 288, 0, &win, &sdl) ||
       !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
-                               SDL_TEXTUREACCESS_STREAMING, 256, 32)))
+                               SDL_TEXTUREACCESS_STREAMING, 256, 32)) ||
+      SDL_SetRenderDrawBlendMode(sdl, SDL_BLENDMODE_BLEND))
     return printf("%s\n", SDL_GetError()), 1;
 
   for (SDL_PauseAudio(0);;) {
@@ -92,15 +101,22 @@ int main(int argc, char **argv) {
     }
     if (av_frame_unref(af), av_buffersink_get_frame(sink, af))
       return printf("bad frame\n"), 1;
-    printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
     SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
-    r.h = r.w = 256, r.y = 0;
+    r.h = r.w = 256, r.x = r.y = 0;
     SDL_SetRenderDrawColor(sdl, 0, 0, 0, 255), SDL_RenderFillRect(sdl, &r);
-    for (i = 0; i < 9; i++) {
+    for (i = 0; i < 9; i++, r.x = 0) {
       if (av_frame_unref(vf), av_buffersink_get_frame(vsink[i], vf))
         return printf("bad ch%d frame\n", i), 1;
       SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
       r.h = 32, r.w = 256, r.y = 32 * i, SDL_RenderCopy(sdl, tx, 0, &r);
+      if (!i)
+        continue;
+      av_opt_get_int(band[i], "f", 1, buf);
+      av_opt_get_int(band[i], "w", 1, buf + 1);
+      r.w = (32 - pow(32, 1 - ((double)buf[1]) / (36 * (int)pow(2, i)))) / 2;
+      r.x = 256 - pow(256, 1 - ((double)*buf) / want.freq * want.channels) -
+            r.w / 2;
+      SDL_SetRenderDrawColor(sdl, 0, 192, 255, 96), SDL_RenderFillRect(sdl, &r);
     }
 
     switch (SDL_RenderPresent(sdl), SDL_PollEvent(&ev), ev.type) {
@@ -109,9 +125,26 @@ int main(int argc, char **argv) {
       case SDLK_q:
         return 0;
       }
-      break;
+      continue;
+    case SDL_MOUSEMOTION:
+      if ((i = ev.motion.y / 32) && (ev.motion.state & SDL_BUTTON_LMASK)) {
+        snprintf(TT.buf, 6, "%d",
+                 (int)FFMAX(1, (1 - log(256 - ev.motion.x) / log(256)) *
+                                   want.freq / want.channels));
+        snprintf(TT.buf + 6, 5, "%d",
+                 (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) *
+                                   (36 * (int)pow(2, i))));
+        printf("%f band+%d f=%s w=%s\n",
+               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
+               TT.buf + 6);
+        avfilter_graph_send_command(TT.g, band[i]->name, "f", TT.buf, 0, 0, 0);
+        avfilter_graph_send_command(TT.g, band[i]->name, "w", TT.buf + 6, 0, 0,
+                                    0);
+      }
+      continue;
     case SDL_QUIT:
       return 0;
     }
   }
+  printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
 }
