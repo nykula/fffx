@@ -145,6 +145,6 @@ int main(int argc, char **argv) {
     case SDL_QUIT:
       return 0;
     }
+    printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
   }
-  printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
 }
