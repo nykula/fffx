@@ -19,6 +19,7 @@ int main(int argc, char **argv) {
   long buf[2] = {0};
   SDL_Event ev;
   int i;
+  unsigned char *opt = 0;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   SDL_Texture *tx;
@@ -33,10 +34,10 @@ int main(int argc, char **argv) {
       fltnew(&sink, "abuffersink") || fltnew(&vol, "volume") ||
       fltnew(vsink, "buffersink") ||
       av_opt_set_int(master, "inputs", 9 - 1, 1) ||
-      av_opt_set(*show, "s", "256x32", 1) ||
+      av_opt_set(*show, "s", "128x32", 1) ||
       av_opt_set(*show, "fscale", "log", 1) ||
       av_opt_set_int_list(sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
-      av_opt_set(vol, "volume", "8.0", 1) || avfilter_init_str(master, 0) ||
+      av_opt_set(vol, "volume", "9.0", 1) || avfilter_init_str(master, 0) ||
       avfilter_init_str(*show, 0) || avfilter_init_str(*showsplit, 0) ||
       avfilter_init_str(sink, 0) || avfilter_init_str(vol, 0) ||
       avfilter_link(master, 0, vol, 0) ||
@@ -53,15 +54,19 @@ int main(int argc, char **argv) {
         fltnew(&verbsplit[i], "asplit") || fltnew(&verbwet[i], "afir") ||
         fltnew(&vsink[i], "buffersink") ||
         !(snprintf(TT.buf, 16, "band+%d", i), band[i]->name = strdup(TT.buf)) ||
+        !(snprintf(TT.buf, 16, "verb+%d", i), verb[i]->name = strdup(TT.buf)) ||
         av_opt_set_int(band[i], "f", 48 * (int)pow(2, i), 1) ||
         av_opt_set(band[i], "width_type", "h", 1) ||
         av_opt_set_int(band[i], "w", 36 * (int)pow(2, i - 1), 1) ||
         av_opt_set(dry[i], "filename", argv[2 + (i - 1) % (argc - 2)], 1) ||
         av_opt_set_int(dry[i], "loop", 0, 1) ||
         av_opt_set(room[i], "filename", argv[1], 1) ||
-        av_opt_set(show[i], "s", "256x32", 1) ||
         av_opt_set(show[i], "fscale", "log", 1) ||
-        av_opt_set(verb[i], "weights", "20 10", 1) ||
+        av_opt_set(show[i], "s", "128x32", 1) ||
+        (snprintf(TT.buf, 6, "%d %d", 32 / 4 * 3, 32 / 4),
+         av_opt_set(verb[i], "weights", TT.buf, 1)) ||
+        av_opt_set_int(verbwet[i], "dry", 5, 1) ||
+        av_opt_set_int(verbwet[i], "wet", 10, 1) ||
         avfilter_init_str(band[i], 0) || avfilter_init_str(dry[i], 0) ||
         avfilter_init_str(nul[i], 0) || avfilter_init_str(nulsink[i], 0) ||
         avfilter_init_str(room[i], 0) || avfilter_init_str(show[i], 0) ||
@@ -88,9 +93,9 @@ int main(int argc, char **argv) {
   if (av_buffersink_get_frame(*vsink, vf))
     return printf("bad frame\n"), 1;
   if (SDL_OpenAudio(&want, 0) ||
-      SDL_CreateWindowAndRenderer(256, 288, 0, &win, &sdl) ||
+      SDL_CreateWindowAndRenderer(128 + 32, 32 * 9, 0, &win, &sdl) ||
       !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
-                               SDL_TEXTUREACCESS_STREAMING, 256, 32)) ||
+                               SDL_TEXTUREACCESS_STREAMING, 128, 32)) ||
       SDL_SetRenderDrawBlendMode(sdl, SDL_BLENDMODE_BLEND))
     return printf("%s\n", SDL_GetError()), 1;
 
@@ -102,20 +107,26 @@ int main(int argc, char **argv) {
     if (av_frame_unref(af), av_buffersink_get_frame(sink, af))
       return printf("bad frame\n"), 1;
     SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
-    r.h = r.w = 256, r.x = r.y = 0;
+    r.h = 32 * 9, r.w = 128 + 32, r.x = r.y = 0;
     SDL_SetRenderDrawColor(sdl, 0, 0, 0, 255), SDL_RenderFillRect(sdl, &r);
     for (i = 0; i < 9; i++, r.x = 0) {
       if (av_frame_unref(vf), av_buffersink_get_frame(vsink[i], vf))
         return printf("bad ch%d frame\n", i), 1;
       SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
-      r.h = 32, r.w = 256, r.y = 32 * i, SDL_RenderCopy(sdl, tx, 0, &r);
+      r.h = 32, r.w = 128, r.y = 32 * i, SDL_RenderCopy(sdl, tx, 0, &r);
       if (!i)
         continue;
       av_opt_get_int(band[i], "f", 1, buf);
       av_opt_get_int(band[i], "w", 1, buf + 1);
-      r.x = 256 - pow(256, 1 - 1.0 * *buf / want.freq * want.channels) -
+      r.x = 128 - pow(128, 1 - 1.0 * *buf / (want.freq / want.channels - 1)) -
             (r.w = 32 - pow(32, 1 - 1.0 * buf[1] / *buf)) / 2;
+      r.w = FFMIN(r.w, 128 - r.x);
       SDL_SetRenderDrawColor(sdl, 0, 192, 255, 96), SDL_RenderFillRect(sdl, &r);
+      r.h = r.w = 32 / 8, r.x = 128, r.y += 32 - r.h;
+      av_opt_get(verb[i], "weights", 1, &opt);
+      SDL_SetRenderDrawColor(sdl, 255, 136, 0,
+                             1.0 * atoi((char *)opt) / 32 * 255);
+      SDL_RenderFillRect(sdl, &r), av_free(&opt);
     }
 
     switch (SDL_RenderPresent(sdl), SDL_PollEvent(&ev), ev.type) {
@@ -124,12 +135,13 @@ int main(int argc, char **argv) {
       case SDLK_q:
         return 0;
       }
-      continue;
+      break;
     case SDL_MOUSEMOTION:
-      if ((i = ev.motion.y / 32) && (ev.motion.state & SDL_BUTTON_LMASK)) {
+      if (ev.motion.x < 128 && (i = ev.motion.y / 32) &&
+          (ev.motion.state & SDL_BUTTON_LMASK)) {
         snprintf(TT.buf, 6, "%ld",
-                 (*buf = (int)FFMAX(1, (1 - log(256 - ev.motion.x) / log(256)) *
-                                           want.freq / want.channels)));
+                 (*buf = (int)FFMAX(1, (1 - log(128 - ev.motion.x) / log(128)) *
+                                           (want.freq / want.channels - 1))));
         snprintf(
             TT.buf + 6, 5, "%d",
             (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) * *buf));
@@ -139,8 +151,20 @@ int main(int argc, char **argv) {
         avfilter_graph_send_command(TT.g, band[i]->name, "f", TT.buf, 0, 0, 0);
         avfilter_graph_send_command(TT.g, band[i]->name, "w", TT.buf + 6, 0, 0,
                                     0);
+        ev.type = 0;
+        continue;
+      } else if (ev.motion.x >= 128 && (i = ev.motion.y / 32) &&
+                 (ev.motion.state & SDL_BUTTON_LMASK)) {
+        ev.motion.x -= 128;
+        snprintf(TT.buf, 6, "%d %d", ev.motion.x, 32 - ev.motion.x);
+        printf("%f verb+%d weights=%s\n",
+               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf);
+        avfilter_graph_send_command(TT.g, verb[i]->name, "weights", TT.buf, 0,
+                                    0, 0);
+        ev.type = 0;
+        continue;
       }
-      continue;
+      break;
     case SDL_QUIT:
       return 0;
     }
