@@ -113,9 +113,8 @@ int main(int argc, char **argv) {
         continue;
       av_opt_get_int(band[i], "f", 1, buf);
       av_opt_get_int(band[i], "w", 1, buf + 1);
-      r.w = (32 - pow(32, 1 - ((double)buf[1]) / (36 * (int)pow(2, i)))) / 2;
-      r.x = 256 - pow(256, 1 - ((double)*buf) / want.freq * want.channels) -
-            r.w / 2;
+      r.x = 256 - pow(256, 1 - 1.0 * *buf / want.freq * want.channels) -
+            (r.w = 32 - pow(32, 1 - 1.0 * buf[1] / *buf)) / 2;
       SDL_SetRenderDrawColor(sdl, 0, 192, 255, 96), SDL_RenderFillRect(sdl, &r);
     }
 
@@ -128,12 +127,12 @@ int main(int argc, char **argv) {
       continue;
     case SDL_MOUSEMOTION:
       if ((i = ev.motion.y / 32) && (ev.motion.state & SDL_BUTTON_LMASK)) {
-        snprintf(TT.buf, 6, "%d",
-                 (int)FFMAX(1, (1 - log(256 - ev.motion.x) / log(256)) *
-                                   want.freq / want.channels));
-        snprintf(TT.buf + 6, 5, "%d",
-                 (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) *
-                                   (36 * (int)pow(2, i))));
+        snprintf(TT.buf, 6, "%ld",
+                 (*buf = (int)FFMAX(1, (1 - log(256 - ev.motion.x) / log(256)) *
+                                           want.freq / want.channels)));
+        snprintf(
+            TT.buf + 6, 5, "%d",
+            (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) * *buf));
         printf("%f band+%d f=%s w=%s\n",
                af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
                TT.buf + 6);
