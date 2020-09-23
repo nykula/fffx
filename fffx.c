@@ -14,7 +14,7 @@ int main(int argc, char **argv) {
   AVFilterContext *band[9] = {0}, *dry[9] = {0}, *master = 0, *nul[9] = {0},
                   *nulsink[9] = {0}, *room[9] = {0}, *show[9] = {0},
                   *showsplit[9] = {0}, *sink = 0, *verb[9] = {0},
-                  *verbsplit[9] = {0}, *verbwet[9] = {0}, *vol = 0,
+                  *verbsplit[9] = {0}, *verbwet[9] = {0}, *vol[9] = {0},
                   *vsink[9] = {0};
   long buf[2] = {0};
   SDL_Event ev;
@@ -23,6 +23,7 @@ int main(int argc, char **argv) {
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   SDL_Texture *tx;
+  double volval[9] = {0};
   SDL_AudioSpec want = {0};
   SDL_Window *win;
 
@@ -31,17 +32,17 @@ int main(int argc, char **argv) {
   if (!(TT.g = avfilter_graph_alloc()) || !(af = av_frame_alloc()) ||
       !(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
       fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
-      fltnew(&sink, "abuffersink") || fltnew(&vol, "volume") ||
+      fltnew(&sink, "abuffersink") || fltnew(vol, "volume") ||
       fltnew(vsink, "buffersink") ||
       av_opt_set_int(master, "inputs", 9 - 1, 1) ||
       av_opt_set(*show, "s", "128x32", 1) ||
       av_opt_set(*show, "fscale", "log", 1) ||
       av_opt_set_int_list(sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
-      av_opt_set(vol, "volume", "9.0", 1) || avfilter_init_str(master, 0) ||
+      av_opt_set(*vol, "volume", "9.0", 1) || avfilter_init_str(master, 0) ||
       avfilter_init_str(*show, 0) || avfilter_init_str(*showsplit, 0) ||
-      avfilter_init_str(sink, 0) || avfilter_init_str(vol, 0) ||
-      avfilter_link(master, 0, vol, 0) ||
-      avfilter_link(vol, 0, *showsplit, 0) ||
+      avfilter_init_str(sink, 0) || avfilter_init_str(*vol, 0) ||
+      avfilter_link(master, 0, *vol, 0) ||
+      avfilter_link(*vol, 0, *showsplit, 0) ||
       avfilter_link(*showsplit, 0, *show, 0) ||
       avfilter_link(*showsplit, 1, sink, 0) ||
       avfilter_link(*show, 0, *vsink, 0))
@@ -52,9 +53,10 @@ int main(int argc, char **argv) {
         fltnew(&room[i], "amovie") || fltnew(&show[i], "showfreqs") ||
         fltnew(&showsplit[i], "asplit") || fltnew(&verb[i], "amix") ||
         fltnew(&verbsplit[i], "asplit") || fltnew(&verbwet[i], "afir") ||
-        fltnew(&vsink[i], "buffersink") ||
+        fltnew(&vol[i], "volume") || fltnew(&vsink[i], "buffersink") ||
         !(snprintf(TT.buf, 16, "band+%d", i), band[i]->name = strdup(TT.buf)) ||
         !(snprintf(TT.buf, 16, "verb+%d", i), verb[i]->name = strdup(TT.buf)) ||
+        !(snprintf(TT.buf, 16, "vol+%d", i), vol[i]->name = strdup(TT.buf)) ||
         av_opt_set_int(band[i], "f", 48 * (int)pow(2, i), 1) ||
         av_opt_set(band[i], "width_type", "h", 1) ||
         av_opt_set_int(band[i], "w", 36 * (int)pow(2, i - 1), 1) ||
@@ -67,12 +69,15 @@ int main(int argc, char **argv) {
          av_opt_set(verb[i], "weights", TT.buf, 1)) ||
         av_opt_set_int(verbwet[i], "dry", 5, 1) ||
         av_opt_set_int(verbwet[i], "wet", 10, 1) ||
+        (snprintf(TT.buf, 4, "%.1f", (volval[i] = 1.0)),
+         av_opt_set(vol[i], "volume", TT.buf, 1)) ||
         avfilter_init_str(band[i], 0) || avfilter_init_str(dry[i], 0) ||
         avfilter_init_str(nul[i], 0) || avfilter_init_str(nulsink[i], 0) ||
         avfilter_init_str(room[i], 0) || avfilter_init_str(show[i], 0) ||
         avfilter_init_str(showsplit[i], 0) || avfilter_init_str(verb[i], 0) ||
         avfilter_init_str(verbsplit[i], 0) ||
-        avfilter_init_str(verbwet[i], 0) || avfilter_init_str(vsink[i], 0) ||
+        avfilter_init_str(verbwet[i], 0) || avfilter_init_str(vol[i], 0) ||
+        avfilter_init_str(vsink[i], 0) ||
         avfilter_link(nul[i], 0, nulsink[i], 0) ||
         avfilter_link(dry[i], 0, band[i], 0) ||
         avfilter_link(band[i], 0, verbsplit[i], 0) ||
@@ -80,7 +85,8 @@ int main(int argc, char **argv) {
         avfilter_link(room[i], 0, verbwet[i], 1) ||
         avfilter_link(verbsplit[i], 1, verb[i], 0) ||
         avfilter_link(verbwet[i], 0, verb[i], 1) ||
-        avfilter_link(verb[i], 0, showsplit[i], 0) ||
+        avfilter_link(verb[i], 0, vol[i], 0) ||
+        avfilter_link(vol[i], 0, showsplit[i], 0) ||
         avfilter_link(showsplit[i], 0, show[i], 0) ||
         avfilter_link(showsplit[i], 1, master, i - 1) ||
         avfilter_link(show[i], 0, vsink[i], 0))
@@ -122,10 +128,10 @@ int main(int argc, char **argv) {
             (r.w = 32 - pow(32, 1 - 1.0 * buf[1] / *buf)) / 2;
       r.w = FFMIN(r.w, 128 - r.x);
       SDL_SetRenderDrawColor(sdl, 0, 192, 255, 96), SDL_RenderFillRect(sdl, &r);
-      r.h = r.w = 32 / 8, r.x = 128, r.y += 32 - r.h;
       av_opt_get(verb[i], "weights", 1, &opt);
-      SDL_SetRenderDrawColor(sdl, 255, 136, 0,
-                             1.0 * atoi((char *)opt) / 32 * 255);
+      r.h = r.w = 32 / 8, r.x = 128 - r.w / 2 + 1.0 * atoi((char *)opt);
+      r.y += 32 - r.h / 2 - volval[i] / 2.0 * 32;
+      SDL_SetRenderDrawColor(sdl, 255, 136, 0, 255);
       SDL_RenderFillRect(sdl, &r), av_free(&opt);
     }
 
@@ -145,7 +151,7 @@ int main(int argc, char **argv) {
         snprintf(
             TT.buf + 6, 5, "%d",
             (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) * *buf));
-        printf("%f band+%d f=%s w=%s\n",
+        printf("%f %d band.f=%s band.w=%s\n",
                af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
                TT.buf + 6);
         avfilter_graph_send_command(TT.g, band[i]->name, "f", TT.buf, 0, 0, 0);
@@ -157,9 +163,14 @@ int main(int argc, char **argv) {
                  (ev.motion.state & SDL_BUTTON_LMASK)) {
         ev.motion.x -= 128;
         snprintf(TT.buf, 6, "%d %d", ev.motion.x, 32 - ev.motion.x);
-        printf("%f verb+%d weights=%s\n",
-               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf);
+        snprintf(TT.buf + 6, 4, "%.1f",
+                 (volval[i] = (32 - ev.motion.y % 32) * 2.0 / 32));
+        printf("%f ch%d verb.weights=\"%s\" vol.volume=%s\n",
+               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
+               TT.buf + 6);
         avfilter_graph_send_command(TT.g, verb[i]->name, "weights", TT.buf, 0,
+                                    0, 0);
+        avfilter_graph_send_command(TT.g, vol[i]->name, "volume", TT.buf + 6, 0,
                                     0, 0);
         ev.type = 0;
         continue;
