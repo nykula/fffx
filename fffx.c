@@ -5,9 +5,14 @@
 static struct TT {
   char buf[16];
   AVFilterGraph *g;
+  double ss;
 } TT;
 int fltnew(AVFilterContext **f, const char *n) {
   return !(*f = avfilter_graph_alloc_filter(TT.g, avfilter_get_by_name(n), 0));
+}
+int fltset(AVFilterContext *f, char *opt, char *val) {
+  printf("%f %s %s %s\n", TT.ss, f->name, opt, val);
+  return avfilter_graph_send_command(TT.g, f->name, opt, val, 0, 0, 0);
 }
 int main(int argc, char **argv) {
   AVFrame *af, *vf;
@@ -134,51 +139,44 @@ int main(int argc, char **argv) {
       SDL_SetRenderDrawColor(sdl, 255, 136, 0, 255);
       SDL_RenderFillRect(sdl, &r), av_free(&opt);
     }
-
-    switch (SDL_RenderPresent(sdl), SDL_PollEvent(&ev), ev.type) {
-    case SDL_KEYDOWN:
-      switch (ev.key.keysym.sym) {
-      case SDLK_q:
+    TT.ss = af->pts * av_q2d(av_buffersink_get_time_base(sink));
+    if (SDL_RenderPresent(sdl), !SDL_PollEvent(0)) {
+      printf("%f\n", TT.ss);
+      continue;
+    }
+    while (SDL_PollEvent(&ev))
+      switch (ev.type) {
+      case SDL_KEYDOWN:
+        switch (ev.key.keysym.sym) {
+        case SDLK_q:
+          return 0;
+        }
+        continue;
+      case SDL_MOUSEMOTION:
+        if (ev.motion.x < 128 && (i = ev.motion.y / 32) &&
+            (ev.motion.state & SDL_BUTTON_LMASK)) {
+          snprintf(
+              TT.buf, 6, "%ld",
+              (*buf = (int)FFMAX(1, (1 - log(128 - ev.motion.x) / log(128)) *
+                                        (want.freq / want.channels - 1))));
+          snprintf(
+              TT.buf + 6, 5, "%d",
+              (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) * *buf));
+          if (fltset(band[i], "f", TT.buf) || fltset(band[i], "w", TT.buf + 6))
+            return printf("bad opt\n"), 1;
+        } else if (ev.motion.x >= 128 && (i = ev.motion.y / 32) &&
+                   (ev.motion.state & SDL_BUTTON_LMASK)) {
+          ev.motion.x -= 128;
+          snprintf(TT.buf, 6, "%d %d", ev.motion.x, 32 - ev.motion.x);
+          snprintf(TT.buf + 6, 4, "%.1f",
+                   (volval[i] = (32 - ev.motion.y % 32) * 2.0 / 32));
+          if (fltset(verb[i], "weights", TT.buf) ||
+              fltset(vol[i], "volume", TT.buf + 6))
+            return printf("bad opt\n"), 1;
+        }
+        continue;
+      case SDL_QUIT:
         return 0;
       }
-      break;
-    case SDL_MOUSEMOTION:
-      if (ev.motion.x < 128 && (i = ev.motion.y / 32) &&
-          (ev.motion.state & SDL_BUTTON_LMASK)) {
-        snprintf(TT.buf, 6, "%ld",
-                 (*buf = (int)FFMAX(1, (1 - log(128 - ev.motion.x) / log(128)) *
-                                           (want.freq / want.channels - 1))));
-        snprintf(
-            TT.buf + 6, 5, "%d",
-            (int)FFMAX(1, (1 - log(32 - ev.motion.y % 32) / log(32)) * *buf));
-        printf("%f %d band.f=%s band.w=%s\n",
-               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
-               TT.buf + 6);
-        avfilter_graph_send_command(TT.g, band[i]->name, "f", TT.buf, 0, 0, 0);
-        avfilter_graph_send_command(TT.g, band[i]->name, "w", TT.buf + 6, 0, 0,
-                                    0);
-        ev.type = 0;
-        continue;
-      } else if (ev.motion.x >= 128 && (i = ev.motion.y / 32) &&
-                 (ev.motion.state & SDL_BUTTON_LMASK)) {
-        ev.motion.x -= 128;
-        snprintf(TT.buf, 6, "%d %d", ev.motion.x, 32 - ev.motion.x);
-        snprintf(TT.buf + 6, 4, "%.1f",
-                 (volval[i] = (32 - ev.motion.y % 32) * 2.0 / 32));
-        printf("%f ch%d verb.weights=\"%s\" vol.volume=%s\n",
-               af->pts * av_q2d(av_buffersink_get_time_base(sink)), i, TT.buf,
-               TT.buf + 6);
-        avfilter_graph_send_command(TT.g, verb[i]->name, "weights", TT.buf, 0,
-                                    0, 0);
-        avfilter_graph_send_command(TT.g, vol[i]->name, "volume", TT.buf + 6, 0,
-                                    0, 0);
-        ev.type = 0;
-        continue;
-      }
-      break;
-    case SDL_QUIT:
-      return 0;
-    }
-    printf("%f\n", af->pts * av_q2d(av_buffersink_get_time_base(sink)));
   }
 }
