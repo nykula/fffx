@@ -15,22 +15,136 @@ int fltset(AVFilterContext *f, char *opt, char *val) {
   return avfilter_graph_send_command(TT.g, f->name, opt, val, 0, 0, 0);
 }
 int main(int argc, char **argv) {
-  AVFrame *af, *vf;
-  AVFilterContext *band[9] = {0}, *dry[9] = {0}, *master = 0, *nul[9] = {0},
-                  *nulsink[9] = {0}, *room[9] = {0}, *show[9] = {0},
-                  *showsplit[9] = {0}, *sink = 0, *verb[9] = {0},
-                  *verbsplit[9] = {0}, *verbwet[9] = {0}, *vol[9] = {0},
-                  *vsink[9] = {0};
-  long buf[2] = {0};
+  AVFrame *af, *af0 = 0, *af1 = 0, *vf;
+  AVFilterContext *band[9], *dry[9], *master, *nul[9], *nulsink[9], *room[9],
+      *show[9], *showsplit[9], *sink, *verb[9], *verbsplit[9], *verbwet[9],
+      *vol[9], *vsink[9];
+  long buf[2];
+  double duration, volval[9];
   SDL_Event ev;
-  int i;
+  int i, j, len, pause = 0, skip = 0;
   unsigned char *opt = 0;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   SDL_Texture *tx;
-  double volval[9] = {0};
   SDL_AudioSpec want = {0};
   SDL_Window *win;
+
+  if (argc == 2) { // Sample chop mode.
+    if (!(TT.g = avfilter_graph_alloc()) || !(vf = av_frame_alloc()) ||
+        fltnew(dry, "amovie") || fltnew(show, "showwavespic") ||
+        fltnew(showsplit, "asplit") || fltnew(&sink, "abuffersink") ||
+        fltnew(vsink, "buffersink") ||
+        av_opt_set(*dry, "filename", argv[1], 1) ||
+        avfilter_init_str(*dry, 0) || avfilter_init_str(*show, 0) ||
+        avfilter_init_str(*showsplit, 0) || avfilter_init_str(sink, 0) ||
+        avfilter_init_str(*vsink, 0) || avfilter_link(*dry, 0, *showsplit, 0) ||
+        avfilter_link(*showsplit, 0, sink, 0) ||
+        avfilter_link(*showsplit, 1, *show, 0) ||
+        avfilter_link(*show, 0, *vsink, 0) || avfilter_graph_config(TT.g, 0))
+      return printf("bad graph\n"), 1;
+    want.channels = av_buffersink_get_channels(sink);
+    want.freq = av_buffersink_get_sample_rate(sink);
+    if (av_buffersink_get_frame(*vsink, vf))
+      return printf("bad frame\n"), 1;
+    if (SDL_OpenAudio(&want, 0) ||
+        SDL_CreateWindowAndRenderer(600, 240, 0, &win, &sdl) ||
+        !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
+                                 SDL_TEXTUREACCESS_STREAMING, 600, 240)) ||
+        SDL_SetRenderDrawBlendMode(sdl, SDL_BLENDMODE_BLEND))
+      return printf("%s\n", SDL_GetError()), 1;
+    SDL_UpdateTexture(tx, 0, *vf->data, *vf->linesize);
+
+    for (;; af1 = af) {
+      if (!(af = av_frame_alloc()))
+        return printf("bad mem\n"), 1;
+      if ((i = av_buffersink_get_frame(sink, af)) == AVERROR_EOF) {
+        av_frame_free(&af), af = af1;
+        break;
+      } else if (i)
+        return printf("bad frame\n"), 1;
+      if (!af0)
+        af0 = af;
+      if (af1)
+        af1->opaque = af;
+    }
+    duration = af->pts * av_q2d(av_buffersink_get_time_base(sink));
+    af = af->opaque = af1 = af0;
+    for (af = af0, i = 0; af->opaque != af0; i++, af = af->opaque)
+      ;
+    len = i / 8, af = af1;
+
+    for (SDL_PauseAudio(0);;) {
+      if (pause)
+        SDL_Delay(1);
+      else if ((int)SDL_GetQueuedAudioSize(1) >
+               af->channels * af->nb_samples * 2) {
+        SDL_Delay(1);
+        continue;
+      }
+      TT.ss = af->pts * av_q2d(av_buffersink_get_time_base(sink));
+      if (!pause) {
+        SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
+        af = af->opaque;
+      }
+      r.h = 240, r.w = 600, r.x = r.y = 0, SDL_RenderCopy(sdl, tx, 0, &r);
+      r.w = 1, r.x = (int)(TT.ss / duration * 600);
+      SDL_SetRenderDrawColor(sdl, 255, 136, 0, 255),
+          SDL_RenderFillRect(sdl, &r);
+
+      af1 = af, SDL_SetRenderDrawColor(sdl, 255, 136, 0, 136);
+      for (af = af0, i = 0; i < skip; i++, af = af->opaque)
+        ;
+      for (i = 9; i--;) {
+        r.x = (int)(af->pts * av_q2d(av_buffersink_get_time_base(sink)) /
+                    duration * 600);
+        SDL_RenderFillRect(sdl, &r);
+        for (j = len; j--; af = af->opaque)
+          ;
+      }
+      af = af1;
+
+      if (SDL_RenderPresent(sdl), !SDL_PollEvent(0) && !pause) {
+        printf("%f\n", TT.ss);
+        continue;
+      }
+      while (SDL_PollEvent(&ev))
+        switch (ev.type) {
+        case SDL_KEYDOWN:
+          switch (ev.key.keysym.sym) {
+          case SDLK_h:
+            printf("%f len %d\n", TT.ss, len = FFMAX(1, len - 1));
+            continue;
+          case SDLK_l:
+            printf("%f len %d\n", TT.ss, len = FFMAX(1, len + 1));
+            continue;
+          case SDLK_p:
+            pause = !pause;
+            continue;
+          case SDLK_q:
+            return 0;
+          case SDLK_s:
+            for (af1 = af, af = af0, skip = 0; af != af1;)
+              af = af->opaque, skip++;
+            printf("%f skip %d\n", TT.ss, skip);
+            continue;
+          }
+          for (i = 0; i < 8; i++)
+            if (ev.key.keysym.sym ==
+                ((int[]){SDLK_w, SDLK_e, SDLK_r, SDLK_t, SDLK_y, SDLK_u, SDLK_i,
+                         SDLK_o})[i]) {
+              for (af = af0, i = skip + i * len; i--; af = af->opaque)
+                ;
+              printf("%f seek\n",
+                     af->pts * av_q2d(av_buffersink_get_time_base(sink)));
+              break;
+            }
+          continue;
+        case SDL_QUIT:
+          return 0;
+        }
+    }
+  }
 
   if (argc < 3)
     return printf("usage: fffx reverb.wav 1.wav 2.wav ... 8.wav\n"), 1;
