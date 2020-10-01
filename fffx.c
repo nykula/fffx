@@ -2,6 +2,10 @@
 #include "libavfilter/buffersink.h"
 #include "libavutil/opt.h"
 #include <SDL.h>
+#include <fcntl.h>
+#include <libgen.h>
+#include <time.h>
+#include <unistd.h>
 static struct TT {
   char buf[16];
   AVFilterGraph *g;
@@ -22,10 +26,18 @@ int main(int argc, char **argv) {
   long buf[2];
   double duration, volval[9];
   SDL_Event ev;
-  int i, j, len, pause = 0, skip = 0;
+  int fd, i, j, len, pause = 0, skip = 0;
+  struct Ins {
+    char head[16], _[8], gbv, dfp, _0[4], nos, _1, name[26], _2[6];
+    unsigned short notesmp[120], _3[125];
+  } ins = {.dfp = 128, .gbv = 128, .head = "IMPI", .nos = 16};
   unsigned char *opt = 0;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
+  struct Smp {
+    char head[16], _, gvl, flg, vol, name[26], _0[2];
+    int len, _1[2], freq, _2[2], pos, _3;
+  } smp = {.flg = 1, .gvl = 64, .head = "IMPS", .vol = 64};
   SDL_Texture *tx;
   SDL_AudioSpec want = {0};
   SDL_Window *win;
@@ -36,6 +48,10 @@ int main(int argc, char **argv) {
         fltnew(showsplit, "asplit") || fltnew(&sink, "abuffersink") ||
         fltnew(vsink, "buffersink") ||
         av_opt_set(*dry, "filename", argv[1], 1) ||
+        av_opt_set_int_list(sink, "channel_layouts", ((unsigned long[]){4, 0}),
+                            0, 1) ||
+        av_opt_set_int_list(sink, "sample_fmts", ((int[]){0, -1}), -1, 1) ||
+        av_opt_set_int_list(sink, "sample_rates", ((int[]){22050, 0}), 0, 1) ||
         avfilter_init_str(*dry, 0) || avfilter_init_str(*show, 0) ||
         avfilter_init_str(*showsplit, 0) || avfilter_init_str(sink, 0) ||
         avfilter_init_str(*vsink, 0) || avfilter_link(*dry, 0, *showsplit, 0) ||
@@ -43,10 +59,9 @@ int main(int argc, char **argv) {
         avfilter_link(*showsplit, 1, *show, 0) ||
         avfilter_link(*show, 0, *vsink, 0) || avfilter_graph_config(TT.g, 0))
       return printf("bad graph\n"), 1;
-    want.channels = av_buffersink_get_channels(sink);
-    want.freq = av_buffersink_get_sample_rate(sink);
     if (av_buffersink_get_frame(*vsink, vf))
       return printf("bad frame\n"), 1;
+    want.channels = 1, want.format = (unsigned int)8, want.freq = 22050;
     if (SDL_OpenAudio(&want, 0) ||
         SDL_CreateWindowAndRenderer(600, 240, 0, &win, &sdl) ||
         !(tx = SDL_CreateTexture(sdl, SDL_PIXELFORMAT_ABGR8888,
@@ -72,19 +87,18 @@ int main(int argc, char **argv) {
     af = af->opaque = af1 = af0;
     for (af = af0, i = 0; af->opaque != af0; i++, af = af->opaque)
       ;
-    len = i / 8, af = af1;
+    len = i / ins.nos, af = af1;
 
     for (SDL_PauseAudio(0);;) {
       if (pause)
         SDL_Delay(1);
-      else if ((int)SDL_GetQueuedAudioSize(1) >
-               af->channels * af->nb_samples * 2) {
+      else if ((int)SDL_GetQueuedAudioSize(1) > want.freq / 30) {
         SDL_Delay(1);
         continue;
       }
       TT.ss = af->pts * av_q2d(av_buffersink_get_time_base(sink));
       if (!pause) {
-        SDL_QueueAudio(1, *af->data, af->channels * af->nb_samples * 2);
+        SDL_QueueAudio(1, *af->data, af->nb_samples);
         af = af->opaque;
       }
       r.h = 240, r.w = 600, r.x = r.y = 0, SDL_RenderCopy(sdl, tx, 0, &r);
@@ -95,7 +109,7 @@ int main(int argc, char **argv) {
       af1 = af, SDL_SetRenderDrawColor(sdl, 255, 136, 0, 136);
       for (af = af0, i = 0; i < skip; i++, af = af->opaque)
         ;
-      for (i = 9; i--;) {
+      for (i = 0; i < ins.nos; i++) {
         r.x = (int)(af->pts * av_q2d(av_buffersink_get_time_base(sink)) /
                     duration * 600);
         SDL_RenderFillRect(sdl, &r);
@@ -112,6 +126,8 @@ int main(int argc, char **argv) {
         switch (ev.type) {
         case SDL_KEYDOWN:
           switch (ev.key.keysym.sym) {
+          case SDLK_ESCAPE:
+            return 0;
           case SDLK_h:
             printf("%f len %d\n", TT.ss, len = FFMAX(1, len - 1));
             continue;
@@ -119,20 +135,45 @@ int main(int argc, char **argv) {
             printf("%f len %d\n", TT.ss, len = FFMAX(1, len + 1));
             continue;
           case SDLK_p:
-            pause = !pause;
+            if (!(pause = !pause))
+              continue;
+            snprintf(TT.buf, 13, "%08lx.iti", time(0));
+            if ((fd = open(TT.buf, 73, 0640)) == -1)
+              return perror("bad file"), 1;
+            snprintf(ins.name, 26, "%s", basename(argv[1]));
+            for (i = 0; i < 10; i++)
+              for (j = 0; j < ins.nos; j++)
+                ins.notesmp[12 * i + j] = ((1 + j) << 8) + 12 * i;
+            write(fd, &ins, sizeof(ins));
+            smp.freq = want.freq, smp.pos = sizeof(ins) + sizeof(smp) * ins.nos;
+
+            for (af1 = af, af = af0, i = 0; i < skip; i++, af = af->opaque)
+              ;
+            for (i = 0; i < ins.nos; i++) {
+              snprintf(smp.name, 26, "%f",
+                       af->pts * av_q2d(av_buffersink_get_time_base(sink)));
+              for (smp.len = 0, j = len; j--; af = af->opaque)
+                smp.len += af->nb_samples;
+              write(fd, &smp, sizeof(smp)), smp.pos += smp.len;
+            }
+
+            for (af = af0, i = 0; i < skip; i++, af = af->opaque)
+              ;
+            for (i = len * ins.nos; i--; af = af->opaque)
+              write(fd, *af->data, af->nb_samples);
+            close(fd), printf("%f %s\n", TT.ss, TT.buf), af = af1;
             continue;
-          case SDLK_q:
-            return 0;
           case SDLK_s:
             for (af1 = af, af = af0, skip = 0; af != af1;)
               af = af->opaque, skip++;
             printf("%f skip %d\n", TT.ss, skip);
             continue;
           }
-          for (i = 0; i < 8; i++)
+          for (i = 0; i < ins.nos; i++)
             if (ev.key.keysym.sym ==
-                ((int[]){SDLK_w, SDLK_e, SDLK_r, SDLK_t, SDLK_y, SDLK_u, SDLK_i,
-                         SDLK_o})[i]) {
+                ((int[]){SDLK_q, SDLK_2, SDLK_w, SDLK_3, SDLK_e, SDLK_r, SDLK_5,
+                         SDLK_t, SDLK_6, SDLK_y, SDLK_7, SDLK_u, SDLK_i, SDLK_9,
+                         SDLK_o, SDLK_0})[i]) {
               for (af = af0, i = skip + i * len; i--; af = af->opaque)
                 ;
               printf("%f seek\n",
