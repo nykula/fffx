@@ -18,27 +18,33 @@ int fltset(AVFilterContext *f, char *opt, char *val) {
   printf("%f %s %s %s\n", TT.ss, f->name, opt, val);
   return avfilter_graph_send_command(TT.g, f->name, opt, val, 0, 0, 0);
 }
+int fsub(AVFrame *af, AVFrame *af0) {
+  int i = 0;
+  for (; af0 != af; i++, af0 = af0->opaque)
+    ;
+  return i;
+}
 int main(int argc, char **argv) {
   AVFrame *af, *af0 = 0, *af1 = 0, *vf;
   AVFilterContext *band[9], *dry[9], *master, *nul[9], *nulsink[9], *room[9],
       *show[9], *showsplit[9], *sink, *verb[9], *verbsplit[9], *verbwet[9],
       *vol[9], *vsink[9];
   long buf[2];
-  double duration, volval[9];
-  SDL_Event ev;
-  int fd, i, j, len, pause = 0, skip = 0;
+  int dur, fd, i, j, len, pause = 0, skip = 0;
+  SDL_Event ev, upd = {.type = SDL_USEREVENT};
   struct Ins {
-    char head[16], _[8], gbv, dfp, _0[4], nos, _1, name[26], _2[6];
+    char head[4], dos[13], _[7], gbv, dfp, _0[4], nos, _1, name[26], _2[6];
     unsigned short notesmp[120], _3[125];
-  } ins = {.dfp = 128, .gbv = 128, .head = "IMPI", .nos = 16};
+  } ins = {.dfp = 128, .gbv = 128, .head = "IMPI", .nos = 6};
   unsigned char *opt = 0;
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   struct Smp {
-    char head[16], _, gvl, flg, vol, name[26], _0[2];
+    char head[17], gvl, flg, vol, name[26], _0[2];
     int len, _1[2], freq, _2[2], pos, _3;
   } smp = {.flg = 1, .gvl = 64, .head = "IMPS", .vol = 64};
   SDL_Texture *tx;
+  double volval[9];
   SDL_AudioSpec want = {0};
   SDL_Window *win;
 
@@ -73,7 +79,8 @@ int main(int argc, char **argv) {
     for (;; af1 = af) {
       if (!(af = av_frame_alloc()))
         return printf("bad mem\n"), 1;
-      if ((i = av_buffersink_get_frame(sink, af)) == AVERROR_EOF) {
+      if ((i = av_buffersink_get_samples(sink, af, want.freq / 30)) ==
+          AVERROR_EOF) {
         av_frame_free(&af), af = af1;
         break;
       } else if (i)
@@ -82,36 +89,32 @@ int main(int argc, char **argv) {
         af0 = af;
       if (af1)
         af1->opaque = af;
+      dur++;
     }
-    duration = af->pts * av_q2d(av_buffersink_get_time_base(sink));
-    af = af->opaque = af1 = af0;
-    for (af = af0, i = 0; af->opaque != af0; i++, af = af->opaque)
-      ;
-    len = i / ins.nos, af = af1;
+    af = af->opaque = af1 = af0, len = dur / 6;
 
     for (SDL_PauseAudio(0);;) {
       if (pause)
         SDL_Delay(1);
-      else if ((int)SDL_GetQueuedAudioSize(1) > want.freq / 30) {
+      else if ((int)SDL_GetQueuedAudioSize(1) > want.freq / 30 * 2) {
         SDL_Delay(1);
         continue;
       }
-      TT.ss = af->pts * av_q2d(av_buffersink_get_time_base(sink));
+      i = fsub(af, af0);
       if (!pause) {
         SDL_QueueAudio(1, *af->data, af->nb_samples);
         af = af->opaque;
       }
       r.h = 240, r.w = 600, r.x = r.y = 0, SDL_RenderCopy(sdl, tx, 0, &r);
-      r.w = 1, r.x = (int)(TT.ss / duration * 600);
+      r.w = 1, r.x = (int)(600.0 * (i % dur) / dur);
       SDL_SetRenderDrawColor(sdl, 255, 136, 0, 255),
           SDL_RenderFillRect(sdl, &r);
 
       af1 = af, SDL_SetRenderDrawColor(sdl, 255, 136, 0, 136);
       for (af = af0, i = 0; i < skip; i++, af = af->opaque)
         ;
-      for (i = 0; i < ins.nos; i++) {
-        r.x = (int)(af->pts * av_q2d(av_buffersink_get_time_base(sink)) /
-                    duration * 600);
+      for (i = 0; i <= 6; i++) {
+        r.x = (skip + i * len) % dur * 600.0 / dur;
         SDL_RenderFillRect(sdl, &r);
         for (j = len; j--; af = af->opaque)
           ;
@@ -119,7 +122,7 @@ int main(int argc, char **argv) {
       af = af1;
 
       if (SDL_RenderPresent(sdl), !SDL_PollEvent(0) && !pause) {
-        printf("%f\n", TT.ss);
+        SDL_PushEvent(&upd);
         continue;
       }
       while (SDL_PollEvent(&ev))
@@ -129,27 +132,40 @@ int main(int argc, char **argv) {
           case SDLK_ESCAPE:
             return 0;
           case SDLK_h:
-            printf("%f len %d\n", TT.ss, len = FFMAX(1, len - 1));
+            len = FFMIN(FFMAX(1, len - 1), dur / 6), SDL_PushEvent(&upd);
+            continue;
+          case SDLK_j:
+            len = FFMIN(FFMAX(1, len / 2), dur / 6), SDL_PushEvent(&upd);
+            continue;
+          case SDLK_k:
+            len = FFMIN(FFMAX(1, len * 2), dur / 6), SDL_PushEvent(&upd);
             continue;
           case SDLK_l:
-            printf("%f len %d\n", TT.ss, len = FFMAX(1, len + 1));
+            len = FFMIN(FFMAX(1, len + 1), dur / 6), SDL_PushEvent(&upd);
+            continue;
+          case SDLK_n:
+            for (SDL_PushEvent(&upd), skip--; skip < 0; skip += dur)
+              ;
+            continue;
+          case SDLK_m:
+            for (SDL_PushEvent(&upd), skip++; skip >= dur; skip -= dur)
+              ;
             continue;
           case SDLK_p:
             if (!(pause = !pause))
               continue;
-            snprintf(TT.buf, 13, "%08lx.iti", time(0));
-            if ((fd = open(TT.buf, 73, 0640)) == -1)
+            snprintf(ins.dos, 13, "%08lx.iti", time(0));
+            if ((fd = open(ins.dos, 73, 0640)) == -1)
               return perror("bad file"), 1;
             snprintf(ins.name, 26, "%s", basename(argv[1]));
-            for (i = 0; i < 10; i++)
-              for (j = 0; j < ins.nos; j++)
-                ins.notesmp[12 * i + j] = ((1 + j) << 8) + 12 * i;
+            for (i = 0; i < 120; i++)
+              ins.notesmp[i] = ((1 + i % 6) << 8) + 50 + i / 6;
             write(fd, &ins, sizeof(ins));
-            smp.freq = want.freq, smp.pos = sizeof(ins) + sizeof(smp) * ins.nos;
+            smp.freq = want.freq, smp.pos = sizeof(ins) + sizeof(smp) * 6;
 
             for (af1 = af, af = af0, i = 0; i < skip; i++, af = af->opaque)
               ;
-            for (i = 0; i < ins.nos; i++) {
+            for (i = 0; i < 6; i++) {
               snprintf(smp.name, 26, "%f",
                        af->pts * av_q2d(av_buffersink_get_time_base(sink)));
               for (smp.len = 0, j = len; j--; af = af->opaque)
@@ -159,27 +175,25 @@ int main(int argc, char **argv) {
 
             for (af = af0, i = 0; i < skip; i++, af = af->opaque)
               ;
-            for (i = len * ins.nos; i--; af = af->opaque)
+            for (i = len * 6; i--; af = af->opaque)
               write(fd, *af->data, af->nb_samples);
-            close(fd), printf("%f %s\n", TT.ss, TT.buf), af = af1;
+            close(fd), af = af1, SDL_PushEvent(&upd);
             continue;
           case SDLK_s:
-            for (af1 = af, af = af0, skip = 0; af != af1;)
-              af = af->opaque, skip++;
-            printf("%f skip %d\n", TT.ss, skip);
+            skip = fsub(af, af0), SDL_PushEvent(&upd);
             continue;
           }
-          for (i = 0; i < ins.nos; i++)
+          for (i = 0; i < 6; i++)
             if (ev.key.keysym.sym ==
-                ((int[]){SDLK_q, SDLK_2, SDLK_w, SDLK_3, SDLK_e, SDLK_r, SDLK_5,
-                         SDLK_t, SDLK_6, SDLK_y, SDLK_7, SDLK_u, SDLK_i, SDLK_9,
-                         SDLK_o, SDLK_0})[i]) {
+                ((int[]){SDLK_q, SDLK_2, SDLK_w, SDLK_3, SDLK_e, SDLK_r})[i]) {
               for (af = af0, i = skip + i * len; i--; af = af->opaque)
                 ;
-              printf("%f seek\n",
-                     af->pts * av_q2d(av_buffersink_get_time_base(sink)));
+              SDL_PushEvent(&upd);
               break;
             }
+          continue;
+        case SDL_USEREVENT:
+          printf("%d/%d %s %d+%d*6\n", fsub(af, af0), dur, ins.dos, skip, len);
           continue;
         case SDL_QUIT:
           return 0;
