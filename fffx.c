@@ -131,6 +131,9 @@ int main(int argc, char **argv) {
           switch (ev.key.keysym.sym) {
           case SDLK_ESCAPE:
             return 0;
+          case SDLK_SPACE:
+            pause = !pause;
+            continue;
           case SDLK_h:
             len = FFMIN(FFMAX(1, len - 1), dur / 6), SDL_PushEvent(&upd);
             continue;
