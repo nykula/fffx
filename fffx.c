@@ -26,9 +26,9 @@ int fsub(AVFrame *af, AVFrame *af0) {
 }
 int main(int argc, char **argv) {
   AVFrame *af, *af0 = 0, *af1 = 0, *vf;
-  AVFilterContext *band[9], *dry[9], *master, *nul[9], *nulsink[9], *room[9],
-      *show[9], *showsplit[9], *sink, *verb[9], *verbsplit[9], *verbwet[9],
-      *vol[9], *vsink[9];
+  AVFilterContext *band[9], *dry[9], *master, *nul[9], *nulsink[9], *room,
+      *roomsplit, *show[9], *showsplit[9], *sink, *verb[9], *verbsplit[9],
+      *verbwet[9], *vol[9], *vsink[9];
   long buf[2];
   int dur, fd, i, j, len, pause = 0, skip = 0;
   SDL_Event ev, upd = {.type = SDL_USEREVENT};
@@ -205,17 +205,22 @@ int main(int argc, char **argv) {
     return printf("usage: fffx reverb.wav 1.wav 2.wav ... 8.wav\n"), 1;
   if (!(TT.g = avfilter_graph_alloc()) || !(af = av_frame_alloc()) ||
       !(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
+      fltnew(&room, "amovie") || fltnew(&roomsplit, "asplit") ||
       fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
       fltnew(&sink, "abuffersink") || fltnew(vol, "volume") ||
       fltnew(vsink, "buffersink") ||
       av_opt_set_int(master, "inputs", 9 - 1, 1) ||
+      av_opt_set(room, "filename", argv[1], 1) ||
+      av_opt_set_int(roomsplit, "outputs", 9 - 1, 1) ||
       av_opt_set(*show, "s", "128x32", 1) ||
       av_opt_set(*show, "fscale", "log", 1) ||
       av_opt_set_int_list(sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
       av_opt_set(*vol, "volume", "9.0", 1) || avfilter_init_str(master, 0) ||
+      avfilter_init_str(room, 0) || avfilter_init_str(roomsplit, 0) ||
       avfilter_init_str(*show, 0) || avfilter_init_str(*showsplit, 0) ||
       avfilter_init_str(sink, 0) || avfilter_init_str(*vol, 0) ||
       avfilter_link(master, 0, *vol, 0) ||
+      avfilter_link(room, 0, roomsplit, 0) ||
       avfilter_link(*vol, 0, *showsplit, 0) ||
       avfilter_link(*showsplit, 0, *show, 0) ||
       avfilter_link(*showsplit, 1, sink, 0) ||
@@ -224,10 +229,10 @@ int main(int argc, char **argv) {
   for (i = 1; i < 9; i++)
     if (fltnew(&band[i], "bandpass") || fltnew(&dry[i], "amovie") ||
         fltnew(&nul[i], "anullsrc") || fltnew(&nulsink[i], "anullsink") ||
-        fltnew(&room[i], "amovie") || fltnew(&show[i], "showfreqs") ||
-        fltnew(&showsplit[i], "asplit") || fltnew(&verb[i], "amix") ||
-        fltnew(&verbsplit[i], "asplit") || fltnew(&verbwet[i], "afir") ||
-        fltnew(&vol[i], "volume") || fltnew(&vsink[i], "buffersink") ||
+        fltnew(&show[i], "showfreqs") || fltnew(&showsplit[i], "asplit") ||
+        fltnew(&verb[i], "amix") || fltnew(&verbsplit[i], "asplit") ||
+        fltnew(&verbwet[i], "afir") || fltnew(&vol[i], "volume") ||
+        fltnew(&vsink[i], "buffersink") ||
         !(snprintf(TT.buf, 16, "band+%d", i), band[i]->name = strdup(TT.buf)) ||
         !(snprintf(TT.buf, 16, "verb+%d", i), verb[i]->name = strdup(TT.buf)) ||
         !(snprintf(TT.buf, 16, "vol+%d", i), vol[i]->name = strdup(TT.buf)) ||
@@ -236,7 +241,6 @@ int main(int argc, char **argv) {
         av_opt_set_int(band[i], "w", 36 * (int)pow(2, i - 1), 1) ||
         av_opt_set(dry[i], "filename", argv[2 + (i - 1) % (argc - 2)], 1) ||
         av_opt_set_int(dry[i], "loop", 0, 1) ||
-        av_opt_set(room[i], "filename", argv[1], 1) ||
         av_opt_set(show[i], "fscale", "log", 1) ||
         av_opt_set(show[i], "s", "128x32", 1) ||
         (snprintf(TT.buf, 6, "%d %d", 32 / 4 * 3, 32 / 4),
@@ -247,16 +251,15 @@ int main(int argc, char **argv) {
          av_opt_set(vol[i], "volume", TT.buf, 1)) ||
         avfilter_init_str(band[i], 0) || avfilter_init_str(dry[i], 0) ||
         avfilter_init_str(nul[i], 0) || avfilter_init_str(nulsink[i], 0) ||
-        avfilter_init_str(room[i], 0) || avfilter_init_str(show[i], 0) ||
-        avfilter_init_str(showsplit[i], 0) || avfilter_init_str(verb[i], 0) ||
-        avfilter_init_str(verbsplit[i], 0) ||
+        avfilter_init_str(show[i], 0) || avfilter_init_str(showsplit[i], 0) ||
+        avfilter_init_str(verb[i], 0) || avfilter_init_str(verbsplit[i], 0) ||
         avfilter_init_str(verbwet[i], 0) || avfilter_init_str(vol[i], 0) ||
         avfilter_init_str(vsink[i], 0) ||
         avfilter_link(nul[i], 0, nulsink[i], 0) ||
         avfilter_link(dry[i], 0, band[i], 0) ||
         avfilter_link(band[i], 0, verbsplit[i], 0) ||
         avfilter_link(verbsplit[i], 0, verbwet[i], 0) ||
-        avfilter_link(room[i], 0, verbwet[i], 1) ||
+        avfilter_link(roomsplit, i - 1, verbwet[i], 1) ||
         avfilter_link(verbsplit[i], 1, verb[i], 0) ||
         avfilter_link(verbwet[i], 0, verb[i], 1) ||
         avfilter_link(verb[i], 0, vol[i], 0) ||
