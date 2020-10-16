@@ -1,5 +1,6 @@
 /* 0BSD 2020 Denys Nykula <nykula@ukr.net> */
 #include "libavfilter/buffersink.h"
+#include "libavfilter/buffersrc.h"
 #include "libavutil/opt.h"
 #include <SDL.h>
 #include <fcntl.h>
@@ -36,7 +37,7 @@ int main(int argc, char **argv) {
     char head[4], dos[13], _[7], gbv, dfp, _0[4], nos, _1, name[26], _2[6];
     unsigned short notesmp[120], _3[125];
   } ins = {.dfp = 128, .gbv = 128, .head = "IMPI", .nos = 6};
-  unsigned char *opt = 0;
+  unsigned char *opt = 0, room$[22050 * 2];
   SDL_Rect r = {0};
   SDL_Renderer *sdl;
   struct Smp {
@@ -205,24 +206,47 @@ int main(int argc, char **argv) {
   }
 
   if (argc < 3)
-    return printf("usage: fffx reverb.wav 1.wav 2.wav ... 8.wav\n"), 1;
+    return printf("usage: fffx 1.wav 2.wav ... 8.wav\n"), 1;
   if (!(TT.g = avfilter_graph_alloc()) || !(af = av_frame_alloc()) ||
-      !(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
-      fltnew(&room, "amovie") || fltnew(&roomsplit, "asplit") ||
+      fltnew(dry, "anoisesrc") || fltnew(band, "bandpass") ||
+      fltnew(&band[1], "bandpass") || fltnew(&sink, "abuffersink") ||
+      !((*band)->name = av_strdup("0")) || !(band[1]->name = av_strdup("1")) ||
+      av_opt_set_int_list(sink, "sample_fmts", ((int[]){0, -1}), -1, 1) ||
+      avfilter_init_str(*dry, "d=2:r=22050:s=0") ||
+      avfilter_init_str(*band, "f=1000:mix=0.3:t=h:w=11025") ||
+      avfilter_init_str(band[1], "f=2000:t=h:w=11025") ||
+      avfilter_init_str(sink, 0) || avfilter_link(*dry, 0, *band, 0) ||
+      avfilter_link(*band, 0, band[1], 0) ||
+      avfilter_link(band[1], 0, sink, 0) || avfilter_graph_config(TT.g, 0))
+    return printf("bad room\n"), 1;
+  for (i = 0; av_buffersink_get_samples(sink, af, 1) != AVERROR_EOF; i++) {
+    TT.ss = 1 - log(FFMAX(1, i)) / log(sizeof(room$));
+    room$[i] = (**af->data - 128) * TT.ss * 3 + 128;
+    snprintf(TT.buf, 6, "%d", (int)(TT.ss * 11025));
+    snprintf(TT.buf + 6, 6, "%d", (int)FFMIN(TT.ss * 22050, 11025));
+    if (avfilter_graph_send_command(TT.g, "0", "w", TT.buf, 0, 0, 0) ||
+        avfilter_graph_send_command(TT.g, "1", "w", TT.buf + 6, 0, 0, 0))
+      return printf("bad opt\n"), 1;
+    av_frame_unref(af);
+  }
+
+  if (!(vf = av_frame_alloc()) || fltnew(&master, "amix") ||
+      fltnew(&room, "abuffer") || fltnew(&roomsplit, "asplit") ||
       fltnew(show, "showfreqs") || fltnew(showsplit, "asplit") ||
       fltnew(&sink, "abuffersink") || fltnew(vol, "volume") ||
       fltnew(vsink, "buffersink") ||
       av_opt_set_int(master, "inputs", 9 - 1, 1) ||
-      av_opt_set(room, "filename", argv[1], 1) ||
+      av_opt_set_int(room, "sample_fmt", (af->format = 0), 1) ||
+      av_opt_set_int(room, "sample_rate", (af->sample_rate = 22050), 1) ||
       av_opt_set_int(roomsplit, "outputs", 9 - 1, 1) ||
       av_opt_set(*show, "s", "128x32", 1) ||
       av_opt_set(*show, "fscale", "log", 1) ||
       av_opt_set_int_list(sink, "sample_fmts", ((int[]){1, -1}), -1, 1) ||
       av_opt_set(*vol, "volume", "9.0", 1) || avfilter_init_str(master, 0) ||
-      avfilter_init_str(room, 0) || avfilter_init_str(roomsplit, 0) ||
-      avfilter_init_str(*show, 0) || avfilter_init_str(*showsplit, 0) ||
-      avfilter_init_str(sink, 0) || avfilter_init_str(*vol, 0) ||
-      avfilter_link(master, 0, *vol, 0) ||
+      avfilter_init_str(room, "channel_layout=mono") ||
+      avfilter_init_str(roomsplit, 0) || avfilter_init_str(*show, 0) ||
+      avfilter_init_str(*showsplit, 0) || avfilter_init_str(sink, 0) ||
+      avfilter_init_str(*vol, 0) || avfilter_link(master, 0, *vol, 0) ||
       avfilter_link(room, 0, roomsplit, 0) ||
       avfilter_link(*vol, 0, *showsplit, 0) ||
       avfilter_link(*showsplit, 0, *show, 0) ||
@@ -271,7 +295,9 @@ int main(int argc, char **argv) {
         avfilter_link(showsplit[i], 1, master, i - 1) ||
         avfilter_link(show[i], 0, vsink[i], 0))
       return printf("bad ch%d %s\n", i, argv[1 + i]), 1;
-  if (avfilter_graph_config(TT.g, 0))
+  if (avfilter_graph_config(TT.g, 0) ||
+      (af->channels = 1, *af->data = room$, af->nb_samples = sizeof(room$),
+       av_buffersrc_add_frame(room, af) || av_buffersrc_add_frame(room, 0)))
     return printf("bad graph\n"), 1;
 
   want.channels = av_buffersink_get_channels(sink);
